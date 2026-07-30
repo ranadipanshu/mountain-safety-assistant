@@ -1,0 +1,14 @@
+# Python
+backend/.venv/
+backend/.idea/
+backend/__pycache__/
+backend/.env
+backend/db.sqlite3
+
+# React
+frontend-vite/node_modules/
+frontend-vite/dist/
+frontend-vite/.env
+
+# VS Code
+.vscode/
