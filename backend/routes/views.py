@@ -1,8 +1,8 @@
 from rest_framework import generics
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from .models import Route, LandslideRecord
-from .serializers import RouteSerializer
+from .models import Route, LandslideRecord, DangerZone
+from .serializers import RouteSerializer, DangerZoneSerializer
 
 
 class RouteListView(generics.ListAPIView):
@@ -24,7 +24,6 @@ class RiskScoreView(APIView):
             route = Route.objects.get(id=route_id)
             landslide_count = route.landslides.count()
 
-            # Risk scoring logic
             rainfall = weather_data.get('rainfall_3day', 0)
             weather_score = min(40, rainfall * 0.8)
             landslide_score = min(40, landslide_count * 4)
@@ -49,6 +48,13 @@ class RiskScoreView(APIView):
             return Response({'error': 'Route not found'}, status=404)
 
 
-from django.shortcuts import render
+class DangerZoneView(APIView):
+    def get(self, request):
+        source = request.query_params.get('source', '').strip().title()
+        destination = request.query_params.get('destination', '').strip().title()
 
-# Create your views here.
+        route_name = f"{source} - {destination}"
+        zones = DangerZone.objects.filter(route_name__icontains=source) | DangerZone.objects.filter(
+            route_name__icontains=destination)
+        serializer = DangerZoneSerializer(zones, many=True)
+        return Response(serializer.data)

@@ -25,16 +25,20 @@ def get_weather(location):
     try:
         url = f"https://api.openweathermap.org/data/2.5/forecast"
         params = {
-            'q': location,
+            'q': f"{location},IN",
             'appid': api_key,
             'units': 'metric',
         }
         response = requests.get(url, params=params)
         data = response.json()
 
+        if str(data.get('cod')) != '200':
+            raise ValueError(data.get('message', 'weather lookup failed'))
+
+        # 3-hourly forecast slots: 8 slots/day * 3 days = 24 slots
         rainfall = sum(
             item.get('rain', {}).get('3h', 0)
-            for item in data.get('list', [])[:8]
+            for item in data.get('list', [])[:24]
         )
 
         result = {

@@ -2,37 +2,66 @@ import React, { useState, useEffect } from 'react'
 import { MapContainer, TileLayer, Polyline, Popup, useMap, Marker, Circle } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import L from 'leaflet'
-import { fetchRealRoute } from '../api'
+import { fetchRealRoute, fetchWeather } from '../api'
+import { filterZonesNearRoute } from '../utils/geoUtils'
 
-function FitBounds({ coordinates }) {
+function FitBounds({ coordinates, extraPoints }) {
   const map = useMap()
   useEffect(() => {
     if (coordinates && coordinates.length > 0) {
-      const bounds = L.latLngBounds(coordinates)
+      const allPoints = extraPoints && extraPoints.length > 0
+        ? [...coordinates, ...extraPoints]
+        : coordinates
+      const bounds = L.latLngBounds(allPoints)
       map.fitBounds(bounds, { padding: [50, 50] })
     }
-  }, [coordinates, map])
+  }, [coordinates, extraPoints, map])
   return null
 }
 
+// Coordinates verified against Wikipedia / official sources — the old
+// values were off by 15-55km in several cases (e.g. Nigulsari was
+// placed near Kullu when it's actually ~150km away on NH-5 in Kinnaur).
 const dangerZones = [
-  { lat: 30.4598, lng: 79.0624, type: 'landslide', label: 'Lambagad — Landslide Zone', color: '#ef4444' },
-  { lat: 32.4749, lng: 77.6220, type: 'fog', label: 'Rohtang Pass — Heavy Fog', color: '#94a3b8' },
-  { lat: 34.2268, lng: 75.6420, type: 'snow', label: 'Zoji La — Avalanche Risk', color: '#60a5fa' },
-  { lat: 30.7352, lng: 79.0669, type: 'flood', label: 'Rudraprayag — Flood Zone', color: '#f59e0b' },
-  { lat: 31.3260, lng: 77.4200, type: 'landslide', label: 'Nigulseri — Rockfall Zone', color: '#ef4444' },
-  { lat: 33.0565, lng: 77.8526, type: 'death', label: 'Baralacha La — High Death Zone', color: '#7c3aed' },
-  { lat: 30.6800, lng: 78.7500, type: 'flood', label: 'Uttarkashi — Flood Prone', color: '#f59e0b' },
-  { lat: 31.9245, lng: 77.6287, type: 'landslide', label: 'Kunzum Pass — Landslide', color: '#ef4444' },
+  { lat: 30.4700, lng: 79.4900, type: 'landslide', label: 'Lambagad — Landslide Zone', color: '#ef4444', severity: 'medium' },
+  { lat: 32.3710, lng: 77.2465, type: 'fog', label: 'Rohtang Pass — Heavy Fog', color: '#94a3b8', severity: 'medium' },
+  { lat: 34.2789, lng: 75.4719, type: 'snow', label: 'Zoji La — Avalanche Risk', color: '#60a5fa', severity: 'high' },
+  { lat: 30.2844, lng: 78.9811, type: 'flood', label: 'Rudraprayag — Flood Zone', color: '#f59e0b', severity: 'medium' },
+  { lat: 31.5500, lng: 78.0000, type: 'landslide', label: 'Nigulsari (NH-5, Kinnaur) — Rockfall Zone', color: '#ef4444', severity: 'high' },
+  { lat: 32.7586, lng: 77.4202, type: 'death', label: 'Baralacha La — High Death Zone', color: '#7c3aed', severity: 'high' },
+  { lat: 30.7300, lng: 78.4500, type: 'flood', label: 'Uttarkashi — Flood Prone', color: '#f59e0b', severity: 'medium' },
+  { lat: 32.4158, lng: 77.6485, type: 'landslide', label: 'Kunzum Pass — Landslide', color: '#ef4444', severity: 'medium' },
 ]
+
+const ROUTE_PROXIMITY_KM = 15 // zone must be within this distance of the actual route to be shown
 
 function Map({ setSelectedRoute, setRiskData }) {
   const [source, setSource] = useState('')
   const [destination, setDestination] = useState('')
   const [searchedRoute, setSearchedRoute] = useState(null)
+  const [nearbyZones, setNearbyZones] = useState([])
   const [searchLoading, setSearchLoading] = useState(false)
   const [searchError, setSearchError] = useState('')
   const [showZones, setShowZones] = useState(true)
+
+  const computeRisk = (zones, weather) => {
+    const highSeverityCount = zones.filter((z) => z.severity === 'high').length
+    const landslideScore = Math.min(50, zones.length * 8 + highSeverityCount * 12)
+
+    const rainfall = weather?.rainfall_3day ?? 0
+    const condition = (weather?.condition || '').toLowerCase()
+    let weatherScore = Math.min(50, rainfall * 1.2)
+    if (condition.includes('rain') || condition.includes('storm')) weatherScore += 10
+    if (condition.includes('snow')) weatherScore += 15
+    weatherScore = Math.min(50, weatherScore)
+
+    const total = landslideScore + weatherScore
+    let level = 'safe'
+    if (total >= 55) level = 'high'
+    else if (total >= 25) level = 'caution'
+
+    return { level, landslideScore, weatherScore }
+  }
 
   const handleSearch = async () => {
     if (!source.trim() || !destination.trim()) {
@@ -42,22 +71,58 @@ function Map({ setSelectedRoute, setRiskData }) {
     setSearchLoading(true)
     setSearchError('')
     setSearchedRoute(null)
+    setNearbyZones([])
 
     try {
       const res = await fetchRealRoute(source, destination)
+
+      if (res.data.error) {
+        setSearchError(res.data.error)
+        setSearchLoading(false)
+        return
+      }
+
       setSearchedRoute(res.data)
-      setSelectedRoute({
+
+      if (res.data.warning) {
+        setSearchError(`⚠️ ${res.data.warning}`)
+      }
+
+      const zonesOnRoute = filterZonesNearRoute(dangerZones, res.data.coordinates, ROUTE_PROXIMITY_KM)
+      setNearbyZones(zonesOnRoute)
+
+      let weather = null
+      try {
+        const weatherRes = await fetchWeather(destination)
+        weather = weatherRes.data
+      } catch (weatherErr) {
+        weather = null
+      }
+
+      const { level, landslideScore, weatherScore } = computeRisk(zonesOnRoute, weather)
+
+      const zoneSummary = zonesOnRoute.length > 0
+        ? `${zonesOnRoute.length} known danger zone${zonesOnRoute.length > 1 ? 's' : ''} is route ke ${ROUTE_PROXIMITY_KM}km ke andar hain (${zonesOnRoute.map(z => z.label.split('—')[0].trim()).join(', ')}).`
+        : `Is route ke ${ROUTE_PROXIMITY_KM}km ke andar koi known danger zone nahi hai.`
+
+      const weatherSummary = weather && !weather.error
+        ? `${destination} mein abhi ${weather.condition}, ${weather.temp}°C, 3-din rainfall ~${weather.rainfall_3day}mm.`
+        : `Weather data abhi available nahi hai.`
+
+      const routeInfo = {
         name: `${source} → ${destination}`,
-        risk_level: 'caution',
-        reason: 'Real-time route — OpenRouteService se fetch kiya gaya',
-      })
-      setRiskData({
-        name: `${source} → ${destination}`,
-        risk_level: 'caution',
-        reason: 'Real-time route fetched from OSRM — check danger zones on map',
+        risk_level: level,
+        reason: `${zoneSummary} ${weatherSummary}`,
         distance_km: res.data.distance_km,
         duration_hrs: res.data.duration_hrs,
-      })
+        weather,
+        zones_near_route: zonesOnRoute,
+        landslide_score: landslideScore,
+        weather_score: weatherScore,
+      }
+
+      setSelectedRoute(routeInfo)
+      setRiskData(routeInfo)
     } catch (err) {
       setSearchError('Route nahi mila — dono cities sahi likho')
     } finally {
@@ -121,7 +186,7 @@ function Map({ setSelectedRoute, setRiskData }) {
             attribution="© OpenStreetMap contributors"
           />
 
-          {showZones && dangerZones.map((zone, index) => (
+          {showZones && (searchedRoute ? nearbyZones : dangerZones).map((zone, index) => (
             <Circle
               key={index}
               center={[zone.lat, zone.lng]}
@@ -143,6 +208,14 @@ function Map({ setSelectedRoute, setRiskData }) {
                           zone.type === 'flood' ? '🌊 Flood Zone' :
                             '💀 High Death Zone'}
                   </span>
+                  {zone.distance_km !== undefined && (
+                    <>
+                      <br />
+                      <span style={{ fontSize: '11px', color: '#94a3b8' }}>
+                        Route se ~{zone.distance_km} km door
+                      </span>
+                    </>
+                  )}
                 </div>
               </Popup>
             </Circle>
@@ -150,7 +223,10 @@ function Map({ setSelectedRoute, setRiskData }) {
 
           {searchedRoute && searchedRoute.coordinates && (
             <>
-              <FitBounds coordinates={searchedRoute.coordinates} />
+              <FitBounds
+                coordinates={searchedRoute.coordinates}
+                extraPoints={nearbyZones.map((z) => [z.lat, z.lng])}
+              />
               <Polyline
                 positions={searchedRoute.coordinates}
                 color="#00d4ff"
@@ -196,6 +272,14 @@ function Map({ setSelectedRoute, setRiskData }) {
       {!searchedRoute && (
         <div className="text-center mt-3 text-gray-500 text-sm">
           Source aur destination type karo — real road route map pe dikhega
+        </div>
+      )}
+
+      {searchedRoute && (
+        <div className="text-center mt-3 text-gray-500 text-sm">
+          {nearbyZones.length > 0
+            ? `⚠️ ${nearbyZones.length} danger zone(s) is route ke ${ROUTE_PROXIMITY_KM}km ke andar mile`
+            : `✅ Is route ke ${ROUTE_PROXIMITY_KM}km ke andar koi known danger zone nahi hai`}
         </div>
       )}
     </div>

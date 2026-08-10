@@ -1,6 +1,25 @@
+import re
 from groq import Groq
 from django.conf import settings
 from weather.services import get_weather
+
+KNOWN_LOCATIONS = [
+    'Manali', 'Leh', 'Rishikesh', 'Badrinath', 'Shimla', 'Kinnaur',
+    'Dehradun', 'Mussoorie', 'Rohtang', 'Zoji La', 'Rudraprayag',
+    'Uttarkashi', 'Kunzum', 'Baralacha La',
+]
+
+
+def _extract_locations_from_text(text):
+    """Whole-word match only (regex word boundaries), so 'Leh' inside
+    another word or 'Dehradun' matching an unrelated word can never
+    fire — unlike a plain substring `in` check."""
+    found = []
+    for loc in KNOWN_LOCATIONS:
+        pattern = r'\b' + re.escape(loc.lower()) + r'\b'
+        if re.search(pattern, text.lower()):
+            found.append(loc)
+    return found
 
 
 def get_agent_response(user_message, selected_route=None):
@@ -19,17 +38,27 @@ Risk level: {selected_route.get('risk_level', '')}
 Distance: {selected_route.get('distance_km', '')} km
 Duration: {selected_route.get('duration_hrs', '')} hrs"""
 
-    weather_context = ""
-    locations = ['Manali', 'Leh', 'Rishikesh', 'Badrinath', 'Shimla', 'Kinnaur', 'Dehradun', 'Mussoorie']
-    for loc in locations:
-        if loc.lower() in user_message.lower():
-            weather = get_weather(loc)
-            weather_context = f"""
+    # Priority 1: actually selected route ka real source/destination.
+    # Priority 2 (fallback): whole-word match on user message — kabhi
+    # substring match nahi, isliye "dehradun" kisi aur word ke andar
+    # aane se galat city trigger nahi hogi.
+    locations_to_check = []
+    if selected_route and selected_route.get('name'):
+        locations_to_check = [
+            part.strip() for part in re.split(r'→|->', selected_route['name']) if part.strip()
+        ]
+    if not locations_to_check:
+        locations_to_check = _extract_locations_from_text(user_message)
+
+    weather_blocks = []
+    for loc in locations_to_check[:2]:  # source + destination at most
+        weather = get_weather(loc)
+        weather_blocks.append(f"""
 Current weather at {loc}:
 Temperature: {weather['temp']}°C
 Condition: {weather['condition']}
-Rainfall 3 day: {weather['rainfall_3day']}mm"""
-            break
+Rainfall 3 day: {weather['rainfall_3day']}mm""")
+    weather_context = "".join(weather_blocks)
 
     full_prompt = f"""{context}
 {route_context}

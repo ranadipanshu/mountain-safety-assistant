@@ -1,14 +1,15 @@
 # Python
-backend/.venv/
-backend/.idea/
-backend/__pycache__/
-backend/.env
-backend/db.sqlite3
+__pycache__/
+*.pyc
+
+# Django
+db.sqlite3
+.env
 
 # React
-frontend-vite/node_modules/
-frontend-vite/dist/
-frontend-vite/.env
+node_modules/
+dist/
 
-# VS Code
+# IDE
+.idea/
 .vscode/

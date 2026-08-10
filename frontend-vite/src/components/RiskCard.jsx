@@ -82,21 +82,31 @@ function RiskCard({ riskData }) {
         <div className="bg-gray-800 rounded-lg p-2 text-center">
           <p className="text-gray-400 text-xs">Weather</p>
           <p className="text-white text-sm font-semibold mt-1">
-            {risk === 'high' ? '🌧️ Heavy Rain' :
-             risk === 'caution' ? '🌫️ Foggy' : '☀️ Clear'}
+            {riskData.weather && !riskData.weather.error
+              ? `${riskData.weather.condition} ${riskData.weather.temp}°C`
+              : 'N/A'}
           </p>
         </div>
         <div className="bg-gray-800 rounded-lg p-2 text-center">
-          <p className="text-gray-400 text-xs">Landslide</p>
+          <p className="text-gray-400 text-xs">Danger Zones</p>
           <p className="text-white text-sm font-semibold mt-1">
-            {risk === 'high' ? '🔴 High' :
-             risk === 'caution' ? '🟡 Medium' : '🟢 Low'}
+            {riskData.zones_near_route
+              ? `${riskData.zones_near_route.length > 0 ? '🔴' : '🟢'} ${riskData.zones_near_route.length} nearby`
+              : 'N/A'}
           </p>
         </div>
       </div>
 
+      {riskData.weather && riskData.weather.rainfall_3day !== undefined && (
+        <div className="mt-2 bg-gray-800 rounded-lg p-2 text-center">
+          <p className="text-gray-400 text-xs">3-Day Rainfall (destination)</p>
+          <p className="text-white text-sm font-semibold mt-1">
+            🌧️ {riskData.weather.rainfall_3day} mm
+          </p>
+        </div>
+      )}
+
     </div>
   )
 }
-
 export default RiskCard
